@@ -9,12 +9,14 @@ const ActivitySchema = new mongoose.Schema(
       enum: ["DEAL", "CUSTOMER", "INVENTORY", "SYSTEM", "FINANCE", "TASK"]
     },
 
-    // e.g., 'VIN_SCANNED', 'PRICE_ADJUSTED', 'LEASE_QUOTED'
+    /** * Action keys: 'VIN_SCANNED', 'PRICE_ADJUSTED', 'LEASE_QUOTED', 'COMMIT_TO_TOWER' 
+     * These should be uppercase snake_case for consistency across the engine.
+     */
     type: { type: String, required: true },
 
     message: { type: String, required: true },
 
-    // References for Dashboard Deep-Linking
+    // Deep-linking references for the dashboard feed
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -43,7 +45,10 @@ const ActivitySchema = new mongoose.Schema(
       default: "info"
     },
 
-    // metadata: { before: { price: 30000 }, after: { price: 28500 } }
+    /**
+     * Metadata: Used for tracking state changes.
+     * Example: { oldPrice: 30000, newPrice: 28500, vin: "..." }
+     */
     metadata: { type: mongoose.Schema.Types.Mixed }
   },
   {
@@ -53,20 +58,44 @@ const ActivitySchema = new mongoose.Schema(
   }
 );
 
-// ⭐ Virtual: Relative Time (e.g., "2m ago")
+/**
+ * ⭐ Virtual: Relative Time
+ * Optimized to handle clock drift and long-term retention.
+ */
 ActivitySchema.virtual("relativeTime").get(function () {
-  const diff = Math.floor((new Date() - this.createdAt) / 1000);
-  if (diff < 60) return "just now";
+  if (!this.createdAt) return "---";
+  const now = new Date();
+  const diff = Math.floor((now - this.createdAt) / 1000);
+  
+  // Handle edge case where server/client time sync is off
+  if (diff < 5) return "just now";
+  
+  if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
+  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+  
+  // Return localized date for items older than a week
+  return this.createdAt.toLocaleDateString('en-US', { 
+    month: 'short', 
+    day: 'numeric' 
+  });
 });
 
-// ⭐ Performance Indexing
+/**
+ * ⭐ Performance Indexing
+ * Optimized for the "The Pulse" Live Feed on the dashboard.
+ */
 ActivitySchema.index({ category: 1, createdAt: -1 });
 ActivitySchema.index({ user: 1, createdAt: -1 });
+// Compound index for filtered activity views
+ActivitySchema.index({ level: 1, createdAt: -1 });
 
-// ⭐ Retention Policy (90 Days)
+/**
+ * ⭐ Retention Policy (90 Days)
+ * Keeps the database lean by auto-purging old logs.
+ * 7,776,000 seconds = 90 days.
+ */
 ActivitySchema.index({ createdAt: 1 }, { expireAfterSeconds: 7776000 });
 
 export default mongoose.model("Activity", ActivitySchema);

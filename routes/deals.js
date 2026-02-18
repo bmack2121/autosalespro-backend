@@ -5,7 +5,7 @@ import {
   createDeal,
   getDeals,
   updateDealStatus,
-  commitToManager // ✅ Added for Step 4 Logic
+  commitToManager 
 } from "../controllers/dealController.js";
 
 const router = express.Router();
@@ -16,17 +16,19 @@ const router = express.Router();
 router.use(protect);
 
 // ⭐ GET all deals (Role-based filtering handled in Controller)
+// Sales see their own; Managers see the whole "Tower"
 router.get("/", getDeals);
 
 // ⭐ CREATE / SAVE PENCIL
-// Handles the Four-Square structure and Appraisal data
+// Handles the Four-Square structure, Trade-In ACV, and Inventory linking
 router.post("/", createDeal);
 
-// ⭐ UPDATE deal status (General status changes)
-router.put("/:id/status", updateDealStatus);
+// ⭐ UPDATE deal status (General status changes: "In Progress", "Lost", etc.)
+router.patch("/:id/status", updateDealStatus);
 
 // ⭐ COMMIT TO MANAGER (The Closer)
-// Specialized route for the "I'll Take It" button in the app
-router.post("/:id/commit", commitToManager);
+// Specialized route for the "Send to Tower" button in the app
+// We use PATCH because we are updating the state of an existing deal
+router.patch("/:id/commit", commitToManager);
 
 export default router;

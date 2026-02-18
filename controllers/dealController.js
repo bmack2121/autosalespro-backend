@@ -2,15 +2,23 @@ import Deal from "../models/Deal.js";
 import Activity from "../models/Activity.js";
 import Customer from "../models/Customer.js";
 
-// ⭐ 1. CREATE Lead from DL Scan (The Intake Weapon)
+// ⭐ 1. CREATE Lead from DL Scan
 export const createLeadFromScan = async (req, res) => {
   try {
-    const { firstName, lastName, dlData } = req.body;
+    const { firstName, lastName, dlData, email, phone } = req.body;
 
-    // We split names for better CRM searching/sorting
-    const customer = await Customer.create({
+    // ✅ CHECK FOR EXISTING: Don't create duplicate leads for same DL/Email
+    let customer = await Customer.findOne({ $or: [{ dlNumber: dlData?.number }, { email }] });
+    
+    if (customer) {
+      return res.status(200).json({ message: "Lead already exists", customer });
+    }
+
+    customer = await Customer.create({
       firstName,
       lastName,
+      email,
+      phone,
       dlData,
       assignedTo: req.user.id 
     });
@@ -29,16 +37,15 @@ export const createLeadFromScan = async (req, res) => {
   }
 };
 
-// ⭐ 2. RUN Soft Credit Pull (The Qualification Weapon)
+// ⭐ 2. RUN Soft Credit Pull
 export const runSoftPull = async (req, res) => {
   try {
     const { id } = req.params; 
     const { consent } = req.body;
 
-    if (!consent) return res.status(400).json({ message: "Legal consent is required for credit pulls" });
+    if (!consent) return res.status(400).json({ message: "Legal consent required" });
 
-    // Mocking Credit Logic for the "Weapon" suite
-    // In production, integrate with 700Credit or DealerTrack API here
+    // Mocking Credit Logic
     const tiers = ['Prime', 'Near-Prime', 'Subprime'];
     const mockBand = tiers[Math.floor(Math.random() * tiers.length)];
     const mockFico = mockBand === 'Prime' ? '715-745' : mockBand === 'Near-Prime' ? '630-675' : '510-580';
@@ -48,8 +55,10 @@ export const runSoftPull = async (req, res) => {
       "qualification.ficoRange": mockFico,
       "qualification.consentGiven": true,
       "qualification.consentTimestamp": new Date(),
-      status: "Hot Lead" // Auto-promote status on credit pull
+      status: "Hot Lead" 
     }, { new: true });
+
+    if (!customer) return res.status(404).json({ message: "Customer not found" });
 
     await Activity.create({
       category: "LEAD",
@@ -65,13 +74,12 @@ export const runSoftPull = async (req, res) => {
   }
 };
 
-// ⭐ 3. CREATE/SAVE Deal (The Four-Square Weapon)
+// ⭐ 3. CREATE/SAVE Deal
 export const createDeal = async (req, res) => {
   try {
     const { structure, appraisal, customer, vehicle } = req.body;
 
-    // ✅ VERIFICATION: Sync Appraisal ACV with Deal Trade-In Value
-    // This ensures the salesman doesn't "fat finger" different numbers in different components
+    // ✅ SYNC ACV: Appraisal ACV overrides manual trade input
     const finalACV = appraisal?.finalACV || structure?.tradeInValue || 0;
 
     const dealData = {
@@ -83,13 +91,12 @@ export const createDeal = async (req, res) => {
 
     const deal = await Deal.create(dealData);
 
-    // Update Customer status to "In Deal"
     await Customer.findByIdAndUpdate(customer, { status: "In Deal" });
 
     await Activity.create({
       category: "DEAL",
       type: "DEAL_CREATED",
-      message: `Pencil Created: $${Math.round(deal.structure.monthlyPayment)}/mo on Unit ${vehicle}`,
+      message: `Pencil Created: $${Math.round(deal.structure?.monthlyPayment || 0)}/mo on Unit`,
       user: req.user.id,
       customer: deal.customer,
       metadata: { dealId: deal._id, acv: finalACV }
@@ -98,7 +105,7 @@ export const createDeal = async (req, res) => {
     res.status(201).json(deal);
   } catch (err) {
     console.error("CREATE DEAL ERROR:", err);
-    res.status(500).json({ message: "Failed to initialize deal structure", error: err.message });
+    res.status(500).json({ message: "Failed to initialize deal structure" });
   }
 };
 
@@ -109,18 +116,18 @@ export const getDeals = async (req, res) => {
     if (req.user.role === "sales") query.user = req.user.id;
 
     const deals = await Deal.find(query)
-      .populate("customer", "firstName lastName phone qualification") 
+      .populate("customer", "firstName lastName phone qualification status") 
       .populate("user", "name")
-      .populate("vehicle", "year make model stockNumber price")
+      .populate("vehicle", "year make model stockNumber price photo") // Added photo for card display
       .sort({ createdAt: -1 });
 
     res.json(deals);
   } catch (err) {
-    res.status(500).json({ message: "Pipeline fetch failed", error: err.message });
+    res.status(500).json({ message: "Pipeline fetch failed" });
   }
 };
 
-// ⭐ 5. COMMIT to Manager (The Closer)
+// ⭐ 5. COMMIT to Manager
 export const commitToManager = async (req, res) => {
   try {
     const deal = await Deal.findByIdAndUpdate(
@@ -129,30 +136,30 @@ export const commitToManager = async (req, res) => {
       { new: true }
     );
 
+    if (!deal) return res.status(404).json({ message: "Deal not found" });
+
     await Activity.create({
       category: "DEAL",
       type: "COMMIT_TO_MANAGER",
-      message: `Deal submitted to Manager Tower for final pencil approval.`,
+      message: `Deal submitted to Manager Tower for final approval.`,
       user: req.user.id,
       customer: deal.customer,
       metadata: { dealId: deal._id }
     });
 
-    // TODO: Trigger real-time Socket.io event for Manager Dashboard
     res.json(deal);
   } catch (err) {
-    res.status(500).json({ message: "Submission to tower failed", error: err.message });
+    res.status(500).json({ message: "Submission failed" });
   }
 };
 
-// ⭐ 6. UPDATE Status (General Pipeline Movement)
+// ⭐ 6. UPDATE Status
 export const updateDealStatus = async (req, res) => {
   try {
     const { status } = req.body;
     const deal = await Deal.findByIdAndUpdate(req.params.id, { status }, { new: true });
-    
     res.json(deal);
   } catch (err) {
-    res.status(500).json({ message: "Status update failed", error: err.message });
+    res.status(500).json({ message: "Status update failed" });
   }
 };

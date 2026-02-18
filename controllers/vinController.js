@@ -2,6 +2,7 @@ import axios from "axios";
 
 /**
  * ⭐ Decode VIN (NHTSA API)
+ * Primary source for mechanical specs and safety compliance
  */
 export const decodeVin = async (req, res) => {
   const { vin } = req.params;
@@ -16,7 +17,7 @@ export const decodeVin = async (req, res) => {
     if (data.ErrorCode !== "0") {
       return res
         .status(400)
-        .json({ message: "Invalid VIN structure detected" });
+        .json({ message: `VIN Invalid: ${data.ErrorText}` });
     }
 
     res.json({
@@ -24,9 +25,12 @@ export const decodeVin = async (req, res) => {
       year: data.ModelYear,
       make: data.Make,
       model: data.Model,
-      trim: data.Series || data.Trim,
+      trim: data.Series || data.Trim || "Base",
       bodyClass: data.BodyClass,
-      fuelType: data.FuelTypePrimary
+      fuelType: data.FuelTypePrimary || "Gasoline",
+      driveType: data.DriveType || "N/A",
+      engine: data.DisplacementL ? `${data.DisplacementL}L ${data.EngineCylinders}cyl` : "N/A",
+      transmission: data.TransmissionStyle || "N/A"
     });
   } catch (err) {
     console.error("NHTSA Error:", err.message);
@@ -35,54 +39,61 @@ export const decodeVin = async (req, res) => {
 };
 
 /**
- * ⭐ Market Value Lookup (VinAudit API)
+ * ⭐ Market Intelligence Lookup (MarketCheck API)
+ * Provides Predicted Price, MSRP, and Price Ranking
  */
 export const getMarketValue = async (req, res) => {
   const { vin } = req.params;
-  const apiKey = process.env.VINAUDIT_API_KEY;
+  const apiKey = process.env.MARKETCHECK_API_KEY;
 
-  // Mock fallback if no API key
+  // Mock fallback for development if key is missing
   if (!apiKey || apiKey === "your_key_here") {
     return res.json({
-      average_retail: 28500,
-      trade_in_value: 24200,
-      market_range: { low: 22000, high: 31000 },
-      data_points: 15,
+      mean_price: 28500,
+      msrp: 32000,
+      rank: "Fair Price",
+      market_range: { low: 26000, high: 31000 },
       isMock: true
     });
   }
 
   try {
+    /**
+     * ✅ Using MarketCheck v2 Predict API
+     * This provides the most accurate "Market Average" for your variance logic
+     */
     const response = await axios.get(
-      "https://marketvalue.vinaudit.com/getmarketvalue.php",
+      `https://marketcheck-prod.apigee.net/v2/predict/car/us/marketcheck_price/comparables/decode`,
       {
         params: {
-          key: apiKey,
+          api_key: apiKey,
           vin: vin,
-          format: "json",
-          period: 90
+          include_build: "true" // Pulls MSRP and Build Data
         }
       }
     );
 
-    if (!response.data || response.data.success === false) {
-      return res
-        .status(404)
-        .json({ message: "Market data not found for this VIN" });
-    }
+    const data = response.data;
 
+    // Standardizing the response to match your VinPro Frontend
     res.json({
-      average_retail: response.data.prices?.average || 0,
-      trade_in_value: response.data.prices?.below || 0,
+      mean_price: data.predicted_price || data.mean || 0,
+      msrp: data.msrp || 0,
+      rank: data.price_rank || "Neutral",
       market_range: {
-        low: response.data.prices?.below,
-        high: response.data.prices?.above
+        low: data.range_low,
+        high: data.range_high
       },
-      data_points: response.data.count,
+      // NeoVIN Build Data additions
+      build: {
+        transmission: data.build?.transmission,
+        drive_type: data.build?.drivetrain,
+        interior_color: data.build?.interior_color
+      },
       isMock: false
     });
   } catch (err) {
-    console.error("VinAudit Error:", err.message);
-    res.status(500).json({ message: "Market value service unavailable" });
+    console.error("MarketCheck Error:", err.response?.data || err.message);
+    res.status(500).json({ message: "MarketCheck service unavailable" });
   }
 };

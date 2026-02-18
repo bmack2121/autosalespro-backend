@@ -1,5 +1,6 @@
 import express from "express";
 import { protect } from "../middleware/auth.js"; 
+import { uploadMedia } from "../middleware/uploadMiddleware.js"; 
 
 import {
   getInventory,
@@ -7,7 +8,7 @@ import {
   createInventory,
   updateInventory,
   deleteInventory,
-  uploadVehicleImage,
+  uploadVehicleImage, // ✅ Now provided by controller
   exportInventory,
   bulkUpdateInventory,
   decodeVin,
@@ -18,25 +19,24 @@ const router = express.Router();
 
 /**
  * 🔒 SECURITY: All inventory actions require a valid login token.
- * This protects your inventory "Cost" and "Pack" data from public eyes.
  */
 router.use(protect);
 
 /* -------------------------------------------
  * 📊 UTILITY & EXTERNAL API ROUTES
- * (Static names come first to avoid :id collisions)
+ * (Static routes defined first to avoid :id collisions)
  * ----------------------------------------- */
 router.get("/export", exportInventory);
-router.get("/decode/:vin", decodeVin);      // 🚀 Step 3: VIN Scanner for Appraisal
-router.get("/carfax/:vin", getCarfaxReport); // 🚀 Step 5: E-Brochure Integration
+router.get("/decode/:vin", decodeVin);      
+router.get("/carfax/:vin", getCarfaxReport); 
 
 /* -------------------------------------------
- * 📦 BULK & AGGREGATE OPERATIONS
+ * 📦 BULK OPERATIONS
  * ----------------------------------------- */
 router.patch("/bulk-update", bulkUpdateInventory);
 
 /* -------------------------------------------
- * 🚗 COLLECTION ROUTES
+ * 🚗 COLLECTION & CORE ROUTES
  * ----------------------------------------- */
 router.get("/", getInventory);       
 router.post("/", createInventory);    
@@ -45,11 +45,27 @@ router.post("/", createInventory);
  * 🛠️ INDIVIDUAL UNIT ROUTES
  * ----------------------------------------- */
 router.route("/:id")
-  .get(getVehicleById)     // Fetches specs for the Four-Square DealSheet
-  .put(updateInventory)    // Updates reconditioning costs post-appraisal
+  .get(getVehicleById)     
+  .put(updateInventory)    
+  .patch(updateInventory) 
   .delete(deleteInventory);
 
-// Dedicated endpoint for vehicle photos (Step 3: Damage documentation)
+/* -------------------------------------------
+ * 📷 MEDIA & WALKTHROUGH ASSETS
+ * ----------------------------------------- */
+
+// 1. High-Performance Multi-Part Upload (Photos & 4K Video)
+// uploadMedia processes the files, then passes req.files to updateInventory
+router.post("/:id/media", 
+  uploadMedia.fields([
+    { name: 'photos', maxCount: 10 },
+    { name: 'walkaround', maxCount: 1 }
+  ]), 
+  updateInventory
+);
+
+// 2. Legacy Base64 Upload
+// Direct Base64 string processing from Capacitor Camera
 router.post("/:id/image", uploadVehicleImage);
 
 export default router;

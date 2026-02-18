@@ -1,6 +1,9 @@
 import Customer from "../models/Customer.js";
 import Activity from "../models/Activity.js";
 
+// Helper to get full name consistently
+const getFullName = (c) => `${c.firstName || ''} ${c.lastName || ''}`.trim() || "Unknown Lead";
+
 /**
  * ⭐ GET all customers
  */
@@ -43,7 +46,7 @@ export const createCustomer = async (req, res) => {
     await Activity.create({
       category: "CUSTOMER",
       type: "LEAD_CREATED",
-      message: `New lead created: ${customer.name}`,
+      message: `New lead created: ${getFullName(customer)}`,
       user: req.user.id,
       customer: customer._id
     });
@@ -64,10 +67,10 @@ export const uploadVideo = async (req, res) => {
     const customer = await Customer.findById(req.params.id);
     if (!customer) return res.status(404).json({ message: "Customer not found" });
 
-    const baseUrl = process.env.API_URL || `http://192.168.0.73:5000`;
-    customer.walkthroughVideoUrl = `${baseUrl}/uploads/videos/${req.file.filename}`;
+    // Store relative path so frontend can decide how to prefix it (safer for Capacitor)
+    customer.walkthroughVideoUrl = `/uploads/videos/${req.file.filename}`;
     
-    // 📈 Logic: Video sent = Hot Lead
+    // 📈 Business Intelligence: Video sent = Hot Lead
     customer.engagement = Math.min((customer.engagement || 0) + 25, 100);
     if (customer.status === "New Lead") customer.status = "Hot Lead";
 
@@ -76,7 +79,7 @@ export const uploadVideo = async (req, res) => {
     await Activity.create({
       category: "CUSTOMER",
       type: "VIDEO_SENT",
-      message: `Walkthrough video recorded for ${customer.name}`,
+      message: `Walkthrough video recorded for ${getFullName(customer)}`,
       user: req.user.id,
       customer: customer._id,
       metadata: { videoUrl: customer.walkthroughVideoUrl }
@@ -89,7 +92,7 @@ export const uploadVideo = async (req, res) => {
 };
 
 /**
- * ⭐ ADD DEAL (Satisfies Route import)
+ * ⭐ ADD DEAL
  */
 export const addDeal = async (req, res) => {
   try {
@@ -102,6 +105,15 @@ export const addDeal = async (req, res) => {
     customer.engagement = 100;
 
     await customer.save();
+
+    await Activity.create({
+      category: "DEAL",
+      type: "DEAL_STARTED",
+      message: `Deal structured for ${getFullName(customer)} on unit ${vehicle}`,
+      user: req.user.id,
+      customer: customer._id
+    });
+
     res.json(customer);
   } catch (err) {
     res.status(500).json({ message: "Failed to add deal", error: err.message });
@@ -109,7 +121,7 @@ export const addDeal = async (req, res) => {
 };
 
 /**
- * ⭐ UPDATE CONTACT (Satisfies Route import)
+ * ⭐ UPDATE CONTACT
  */
 export const updateContact = async (req, res) => {
   try {
@@ -144,7 +156,7 @@ export const updateFollowUp = async (req, res) => {
     await Activity.create({
       category: "CUSTOMER",
       type: "FOLLOWUP_UPDATED",
-      message: `Next follow-up scheduled for ${customer.name}`,
+      message: `Next follow-up scheduled for ${getFullName(customer)}`,
       user: req.user.id,
       customer: customer._id
     });
