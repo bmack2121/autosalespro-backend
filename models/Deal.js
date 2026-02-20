@@ -11,14 +11,15 @@ const dealSchema = new mongoose.Schema(
     },
     vehicle: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Vehicle",
+      // ✅ FIX: Match the model name used in Inventory.js
+      ref: "Inventory", 
       required: true
     },
 
-    // Lender Relationship (Integrated with Step 1: FinancingBanksPage)
+    // Lender Relationship
     lender: { type: mongoose.Schema.Types.ObjectId, ref: "Bank" },
 
-    // Financials (Step 4: The Four-Square)
+    // Financials (The Pencil)
     structure: {
       salePrice: { type: Number, required: true },
       downPayment: { type: Number, default: 0 },
@@ -28,9 +29,9 @@ const dealSchema = new mongoose.Schema(
       monthlyPayment: { type: Number }
     },
 
-    // Trade-In Details (Step 3: Appraisal Walkaround)
+    // Trade-In Details (ACV = Actual Cash Value)
     appraisal: {
-      vin: { type: String },
+      vin: { type: String, uppercase: true },
       baseValue: { type: Number },
       deductions: [
         {
@@ -41,21 +42,21 @@ const dealSchema = new mongoose.Schema(
       finalACV: { type: Number }
     },
 
-    // Stipulations Tracking (Salesman's Checklist)
+    // Salesman's Stipulation Checklist
     stipulations: {
-      idVerified: { type: Boolean, default: false }, // Updated via DL Scanner
-      videoSent: { type: Boolean, default: false },  // Updated via Walkthrough Video
+      idVerified: { type: Boolean, default: false }, 
+      videoSent: { type: Boolean, default: false },  
       insuranceProof: { type: Boolean, default: false },
-      creditConsent: { type: Boolean, default: false } // Updated via Soft Pull
+      creditConsent: { type: Boolean, default: false } 
     },
 
     status: {
       type: String,
       enum: [
-        "pending",          // Draft deal
-        "pending_manager",  // Step 4: Salesman hit "I'll Take It"
-        "approved",         // Manager approved the gross
-        "delivered",        // Unit rolled off the lot
+        "pending",          
+        "pending_manager",  
+        "approved",         
+        "delivered",        
         "cancelled"
       ],
       default: "pending"
@@ -67,10 +68,22 @@ const dealSchema = new mongoose.Schema(
 );
 
 /**
- * ⭐ Middleware: Calculate Monthly Payment before saving
- * This ensures the DB reflects the exact "Pencil" shown on the DealSheet
+ * ⭐ Middleware: Financial Calculations
+ * Logic for the "Pencil" to ensure payments are accurate before storage.
  */
 dealSchema.pre("save", function (next) {
+  // 1. Calculate ACV first
+  if (this.appraisal && this.appraisal.baseValue) {
+    const totalDeductions = this.appraisal.deductions.reduce((sum, d) => sum + (d.cost || 0), 0);
+    this.appraisal.finalACV = this.appraisal.baseValue - totalDeductions;
+    
+    // Auto-populate tradeInValue if it hasn't been manually set to something else
+    if (!this.structure.tradeInValue) {
+      this.structure.tradeInValue = this.appraisal.finalACV;
+    }
+  }
+
+  // 2. Calculate Monthly Payment (Standard Amortization)
   const { salePrice, apr, termMonths, downPayment, tradeInValue } = this.structure;
 
   if (salePrice && termMonths) {
@@ -78,18 +91,10 @@ dealSchema.pre("save", function (next) {
     const monthlyRate = (apr || 0) / 100 / 12;
 
     if (monthlyRate > 0) {
-      this.structure.monthlyPayment =
-        (principal * monthlyRate) /
-        (1 - Math.pow(1 + monthlyRate, -termMonths));
+      const payment = (principal * monthlyRate) / (1 - Math.pow(1 + monthlyRate, -termMonths));
+      this.structure.monthlyPayment = Math.round(payment * 100) / 100; // Round to 2 decimals
     } else {
-      this.structure.monthlyPayment = principal / termMonths;
-    }
-    
-    // Auto-update ACV if appraisal data is present
-    if (this.appraisal && this.appraisal.baseValue) {
-      const totalDeductions = this.appraisal.deductions.reduce((sum, d) => sum + d.cost, 0);
-      this.appraisal.finalACV = this.appraisal.baseValue - totalDeductions;
-      this.structure.tradeInValue = this.appraisal.finalACV;
+      this.structure.monthlyPayment = Math.round((principal / termMonths) * 100) / 100;
     }
   }
   next();

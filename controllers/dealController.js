@@ -2,35 +2,57 @@ import Deal from "../models/Deal.js";
 import Activity from "../models/Activity.js";
 import Customer from "../models/Customer.js";
 
+/**
+ * 🛰️ Helper: Broadcast to Socket.io
+ * Ensures the 'Pulse Feed' in the mobile app updates instantly.
+ */
+const broadcastActivity = async (req, activity) => {
+  const io = req.app.get("io");
+  if (io) {
+    const populated = await activity.populate("user", "name role");
+    io.emit("new-activity", populated);
+  }
+};
+
 // ⭐ 1. CREATE Lead from DL Scan
 export const createLeadFromScan = async (req, res) => {
   try {
     const { firstName, lastName, dlData, email, phone } = req.body;
 
-    // ✅ CHECK FOR EXISTING: Don't create duplicate leads for same DL/Email
-    let customer = await Customer.findOne({ $or: [{ dlNumber: dlData?.number }, { email }] });
+    // ✅ CHECK FOR EXISTING: Prevent duplicates based on DL Number or Email
+    let customer = await Customer.findOne({ 
+      $or: [
+        { "dlData.licenseNumber": dlData?.licenseNumber }, 
+        { email: email?.toLowerCase() }
+      ] 
+    });
     
     if (customer) {
-      return res.status(200).json({ message: "Lead already exists", customer });
+      return res.status(200).json({ 
+        message: "Existing lead found. Opening profile...", 
+        customer,
+        isExisting: true 
+      });
     }
 
     customer = await Customer.create({
       firstName,
       lastName,
-      email,
+      email: email?.toLowerCase(),
       phone,
       dlData,
       assignedTo: req.user.id 
     });
 
-    await Activity.create({
-      category: "LEAD",
+    const activity = await Activity.create({
+      category: "CUSTOMER",
       type: "DL_SCAN",
       message: `Lead Captured: ${firstName} ${lastName} via DL Scanner`,
       user: req.user.id,
       customer: customer._id
     });
 
+    broadcastActivity(req, activity);
     res.status(201).json(customer);
   } catch (err) {
     res.status(500).json({ message: "DL Scan processing failed", error: err.message });
@@ -60,14 +82,15 @@ export const runSoftPull = async (req, res) => {
 
     if (!customer) return res.status(404).json({ message: "Customer not found" });
 
-    await Activity.create({
-      category: "LEAD",
+    const activity = await Activity.create({
+      category: "CUSTOMER",
       type: "CREDIT_CHECK",
       message: `Credit Qualified: ${mockBand} Band (${mockFico})`,
       user: req.user.id,
       customer: id
     });
 
+    broadcastActivity(req, activity);
     res.json(customer);
   } catch (err) {
     res.status(500).json({ message: "Soft pull failed", error: err.message });
@@ -77,31 +100,28 @@ export const runSoftPull = async (req, res) => {
 // ⭐ 3. CREATE/SAVE Deal
 export const createDeal = async (req, res) => {
   try {
-    const { structure, appraisal, customer, vehicle } = req.body;
-
-    // ✅ SYNC ACV: Appraisal ACV overrides manual trade input
-    const finalACV = appraisal?.finalACV || structure?.tradeInValue || 0;
-
+    // ✅ Let the Deal model middleware handle the ACV and Payment math
     const dealData = {
       ...req.body,
       user: req.user.id,
-      "structure.tradeInValue": finalACV, 
       status: req.body.status || "pending" 
     };
 
     const deal = await Deal.create(dealData);
 
-    await Customer.findByIdAndUpdate(customer, { status: "In Deal" });
+    // Update Customer Status to "In Deal"
+    await Customer.findByIdAndUpdate(req.body.customer, { status: "In Deal" });
 
-    await Activity.create({
+    const activity = await Activity.create({
       category: "DEAL",
       type: "DEAL_CREATED",
-      message: `Pencil Created: $${Math.round(deal.structure?.monthlyPayment || 0)}/mo on Unit`,
+      message: `Pencil Created: $${Math.round(deal.structure?.monthlyPayment || 0)}/mo for ${deal.vehicle}`,
       user: req.user.id,
       customer: deal.customer,
-      metadata: { dealId: deal._id, acv: finalACV }
+      metadata: { dealId: deal._id }
     });
 
+    broadcastActivity(req, activity);
     res.status(201).json(deal);
   } catch (err) {
     console.error("CREATE DEAL ERROR:", err);
@@ -118,7 +138,8 @@ export const getDeals = async (req, res) => {
     const deals = await Deal.find(query)
       .populate("customer", "firstName lastName phone qualification status") 
       .populate("user", "name")
-      .populate("vehicle", "year make model stockNumber price photo") // Added photo for card display
+      // ✅ FIX: Use 'photos' to match the Inventory model
+      .populate("vehicle", "year make model stockNumber price photos") 
       .sort({ createdAt: -1 });
 
     res.json(deals);
@@ -138,15 +159,16 @@ export const commitToManager = async (req, res) => {
 
     if (!deal) return res.status(404).json({ message: "Deal not found" });
 
-    await Activity.create({
+    const activity = await Activity.create({
       category: "DEAL",
       type: "COMMIT_TO_MANAGER",
-      message: `Deal submitted to Manager Tower for final approval.`,
+      message: `Deal submitted to Tower for final approval.`,
       user: req.user.id,
       customer: deal.customer,
       metadata: { dealId: deal._id }
     });
 
+    broadcastActivity(req, activity);
     res.json(deal);
   } catch (err) {
     res.status(500).json({ message: "Submission failed" });
@@ -158,6 +180,16 @@ export const updateDealStatus = async (req, res) => {
   try {
     const { status } = req.body;
     const deal = await Deal.findByIdAndUpdate(req.params.id, { status }, { new: true });
+    
+    const activity = await Activity.create({
+      category: "DEAL",
+      type: "STATUS_UPDATED",
+      message: `Deal status updated to ${status.toUpperCase()}`,
+      user: req.user.id,
+      customer: deal.customer
+    });
+
+    broadcastActivity(req, activity);
     res.json(deal);
   } catch (err) {
     res.status(500).json({ message: "Status update failed" });

@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-// ✅ Existing Auto-Complete
+// ✅ Fixed Auto-Complete
 export const getAutoComplete = async (req, res) => {
   try {
     const { term } = req.query;
@@ -15,37 +15,43 @@ export const getAutoComplete = async (req, res) => {
     });
     res.status(200).json(response.data);
   } catch (error) {
+    console.error("Auto-complete Error:", error.message);
     res.status(500).json({ message: "Auto-complete failed", error: error.message });
   }
 };
 
-// ✅ NEW: Market Value Lookup
+// ✅ Fixed Market Value Lookup (Migrated from Apigee to api.marketcheck.com)
 export const getMarketValue = async (req, res) => {
   try {
     const { vin } = req.params;
     if (!vin) return res.status(400).json({ message: "VIN is required" });
 
-    // MarketCheck 'active' search gives us the current market averages
-    const response = await axios.get(`https://marketcheck-prod.apigee.net/v2/search/car/active`, {
+    // ✅ FIXED: Updated URL to the current 2026 production host
+    const response = await axios.get(`https://api.marketcheck.com/v2/search/car/active`, {
       params: {
         api_key: process.env.MARKETCHECK_API_KEY,
         vin: vin,
-        include_stats: 'y' // This gives us the mean, median, and mileage averages
+        include_stats: 'y' 
       }
     });
 
-    // We extract the stats object which contains the market averages
+    // MarketCheck returns stats inside the 'stats' object of the response
     const stats = response.data.stats || {};
     
+    // Some versions of the API nest price stats under 'price' or 'mean'
     res.status(200).json({
       vin: vin,
-      market_average: stats.mean_price || 0,
-      market_median: stats.median_price || 0,
-      avg_days_on_market: stats.avg_dom || 0,
+      market_average: stats.price?.mean || stats.mean_price || 0,
+      market_median: stats.price?.median || stats.median_price || 0,
+      avg_days_on_market: stats.dom?.mean || stats.avg_dom || 0,
       total_listings_found: response.data.num_found || 0
     });
   } catch (error) {
-    console.error("Market Value Error:", error.message);
-    res.status(500).json({ message: "Market sync failed" });
+    // Detailed logging to catch any new API shifts
+    console.error("🔥 VinPro Market Sync Error:", error.response?.data || error.message);
+    res.status(500).json({ 
+      message: "Market sync failed", 
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined 
+    });
   }
 };

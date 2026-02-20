@@ -40,8 +40,21 @@ export const getDashboardData = async (req, res) => {
           $group: { 
             _id: null, 
             totalLotValue: { $sum: "$price" },
-            avgMarketVariance: { $avg: "$marketVariance" }, // Requires the virtual logic or field
-            avgAging: { $avg: { $divide: [{ $subtract: [new Date(), "$dateAdded"] }, (1000 * 60 * 60 * 24)] } }
+            // ✅ FIX: Calculate variance manually (Price vs MarketAverage) since virtuals aren't available in aggregate
+            avgMarketVariance: { 
+              $avg: { 
+                $subtract: ["$price", "$marketAverage"] 
+              } 
+            },
+            // ✅ FIX: Using 'createdAt' (or 'dateAdded' if verified) for aging calculation
+            avgAging: { 
+              $avg: { 
+                $divide: [
+                  { $subtract: [new Date(), "$createdAt"] }, 
+                  (1000 * 60 * 60 * 24)
+                ] 
+              } 
+            }
           } 
         }
       ])
@@ -64,12 +77,13 @@ export const getDashboardData = async (req, res) => {
         pipelineValue: pipelineValue[0]?.total || 0,
         totalLotValue: lotHealth.totalLotValue,
         avgAging: Math.round(lotHealth.avgAging || 0),
+        // Score based on whether the lot is priced below or above market average
         marketHealthScore: lotHealth.avgMarketVariance < 0 ? "Aggressive" : "Competitive"
       },
       feed: recentActivity
     });
   } catch (err) {
-    console.error("Dashboard Sync Error:", err);
+    console.error("🔥 VinPro Engine: Dashboard Sync Error:", err);
     res.status(500).json({ message: "VinPro Engine: Failed to sync command center data" });
   }
 };

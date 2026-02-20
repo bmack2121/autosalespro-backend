@@ -33,22 +33,12 @@ const httpServer = createServer(app);
 connectDB();
 
 /* -------------------------------------------
- * 1. Directory Initialization (Automated)
- * Ensures storage is ready for media and reports
+ * 1. Directory Initialization
  * ----------------------------------------- */
-const uploadFolders = [
-  "uploads/videos",
-  "uploads/vehicles",
-  "uploads/carfax",
-  "uploads/profiles"
-];
-
+const uploadFolders = ["uploads/videos", "uploads/vehicles", "uploads/carfax", "uploads/profiles"];
 uploadFolders.forEach(folder => {
   const fullPath = path.join(__dirname, folder);
-  if (!fs.existsSync(fullPath)) {
-    fs.mkdirSync(fullPath, { recursive: true });
-    console.log(`📁 Initialized Directory: ${folder}`);
-  }
+  if (!fs.existsSync(fullPath)) fs.mkdirSync(fullPath, { recursive: true });
 });
 
 /* -------------------------------------------
@@ -60,58 +50,63 @@ app.use(helmet({
   contentSecurityPolicy: false 
 })); 
 
-// ✅ Expanded Allowed Origins for local, mobile, and IP-based access
+// ✅ The "Golden List" for VinPro 2026 Mobile & Web
 const allowedOrigins = [
-  'http://localhost:3000',  
-  'http://localhost:8100', 
-  'http://192.168.0.73:3000',
-  'capacitor://localhost',
-  'http://localhost'
+  'http://localhost:3000',    // Local Web Browser
+  'http://localhost:8100',    // Ionic/Capacitor Dev Server
+  'capacitor://localhost',    // Capacitor iOS
+  'http://localhost',         // Capacitor Android
+  'app://localhost'           // Legacy iOS Webview fallback
 ];
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps or curl)
-    if (!origin || allowedOrigins.includes(origin) || origin.startsWith('capacitor://')) {
+    // 💡 Allow tools like Postman (!origin), defined origins, OR dynamic local LAN IPs
+    if (!origin || allowedOrigins.includes(origin) || origin.startsWith('http://192.168.')) {
       callback(null, true);
     } else {
-      console.warn(`🚨 CORS Blocked Origin: ${origin}`);
+      console.warn(`🚨 VinPro CORS Blocked: ${origin}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
-  credentials: true
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
 app.use(morgan("dev"));
-app.use(express.json({ limit: "100mb" })); // High limit for Base64 VIN photos
+app.use(express.json({ limit: "100mb" })); 
 app.use(express.urlencoded({ limit: "100mb", extended: true }));
 
 /* -------------------------------------------
- * 3. Socket.io Initialization (The Pulse)
- * Powers real-time lot updates
+ * 3. Socket.io (The Pulse)
  * ----------------------------------------- */
 const io = new Server(httpServer, {
   cors: {
-    origin: allowedOrigins,
-    methods: ["GET", "POST"]
+    // ✅ Use true to safely mirror the dynamically accepted Express CORS origin
+    origin: true,
+    methods: ["GET", "POST"],
+    credentials: true
   },
+  // ✅ Crucial for Mobile: Prevents the server from dropping the connection 
+  // immediately if the salesman walks behind a concrete wall.
+  pingInterval: 25000, 
   pingTimeout: 60000,
 });
 
-// Attach io to app so it can be accessed in controllers via req.app.get("io")
 app.set("io", io);
 
 io.on("connection", (socket) => {
   console.log(`📡 Pulse Connected: ${socket.id}`);
-  socket.on("disconnect", () => console.log("🔌 Pulse Disconnected"));
+  socket.on("disconnect", (reason) => console.log(`🔌 Pulse Disconnected: ${reason}`));
 });
 
 /* -------------------------------------------
- * 4. Static File Serving (Vehicle Media)
+ * 4. Static File Serving
  * ----------------------------------------- */
 app.use("/uploads", express.static(path.join(__dirname, "uploads"), {
-  maxAge: "1d",
   setHeaders: (res) => {
+    // Use "*" here only for static assets where credentials aren't required
     res.set("Access-Control-Allow-Origin", "*");
     res.set("Cross-Origin-Resource-Policy", "cross-origin");
   }
@@ -128,46 +123,22 @@ app.use("/api/tasks", tasksRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/marketcheck", marketCheckRoutes);
 
-/* -------------------------------------------
- * 6. Health & Maintenance
- * ----------------------------------------- */
 app.get("/api/ping", (req, res) => {
-  res.json({ 
-    status: "online", 
-    engine: "VinPro v8.2",
-    node: process.version,
-    time: new Date() 
-  });
-});
-
-// Weekly lot data cleanup / report generation
-cron.schedule("0 0 * * 0", () => {
-  console.log("🧹 Running VinPro Engine Maintenance...");
+  res.json({ status: "online", engine: "VinPro v8.2", time: new Date() });
 });
 
 /* -------------------------------------------
- * 7. Error Handling
+ * 6. Error Handling & Server Start
  * ----------------------------------------- */
 app.use((err, req, res, next) => {
-  console.error("🔥 VinPro Internal Error:", err.stack);
+  console.error("🔥 Global Error:", err.stack);
   res.status(err.status || 500).json({
     message: "VinPro Engine Error",
     error: process.env.NODE_ENV === "development" ? err.message : "Internal Error"
   });
 });
 
-/* -------------------------------------------
- * 8. Start Server
- * ----------------------------------------- */
 const PORT = process.env.PORT || 5000;
-const server = httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`
-  🚀 VinPro Engine Online
-  📡 LAN Access: http://192.168.0.73:${PORT}
-  📡 API Base:   http://192.168.0.73:${PORT}/api
-  🛠️  Mode:       ${process.env.NODE_ENV || "development"}
-  `);
+httpServer.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 VinPro Engine Online | Listening on Port ${PORT}`);
 });
-
-// Set timeout to 5 minutes to handle heavy 4K walkaround video uploads
-server.timeout = 300000;
