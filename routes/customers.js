@@ -31,16 +31,18 @@ const router = express.Router();
  * ----------------------------------------- */
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    // Using relative pathing compatible with your server.js setup
-    const dir = "./uploads/videos/";
+    // Safer pathing that starts from the root of your Node project
+    const dir = path.join(process.cwd(), "uploads", "videos");
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
     cb(null, dir);
   },
   filename: (req, file, cb) => {
-    // Clean filename to prevent issues with special characters in IDs
-    const safeId = req.params.id.replace(/[^a-z0-9]/gi, '_');
+    // ✅ FIX: Added a fallback just in case params aren't fully parsed yet
+    const rawId = req.params?.id || 'unassigned';
+    const safeId = rawId.replace(/[^a-z0-9]/gi, '_');
+    
     cb(
       null,
       `walkthrough-${safeId}-${Date.now()}${path.extname(file.originalname)}`
@@ -83,7 +85,8 @@ router.route("/")
 router.route("/:id")
   .get(protect, getCustomer)
   .put(protect, updateCustomer)
-  .delete(protect, protect, admin, deleteCustomer); // Only Admins can purge leads
+  // ✅ FIX: Removed the duplicate 'protect' middleware
+  .delete(protect, admin, deleteCustomer); 
 
 // ⭐ Walkthrough Media Engine
 // Matches the "video" key used in your frontend FormData

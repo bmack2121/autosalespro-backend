@@ -5,12 +5,10 @@ const ActivitySchema = new mongoose.Schema(
     category: {
       type: String,
       required: true,
-      index: true,
       enum: ["DEAL", "CUSTOMER", "INVENTORY", "SYSTEM", "FINANCE", "TASK"]
     },
 
-    /** * Action keys: 'VIN_SCANNED', 'PRICE_ADJUSTED', 'LEASE_QUOTED', 'COMMIT_TO_TOWER' 
-     * These should be uppercase snake_case for consistency across the engine.
+    /** * Action keys: 'UNIT_ADDED', 'VIN_SCANNED', 'PRICE_ADJUSTED', 'COMMIT_TO_TOWER' 
      */
     type: { type: String, required: true },
 
@@ -20,28 +18,27 @@ const ActivitySchema = new mongoose.Schema(
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
-      index: true
+      required: true
     },
     customer: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Customer",
-      index: true
+      index: true 
     },
     inventory: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Inventory",
-      index: true
+      index: true 
     },
     deal: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Deal",
-      index: true
+      index: true 
     },
 
     level: {
       type: String,
-      enum: ["info", "warning", "critical", "success"],
+      enum: ["info", "warning", "critical", "success", "primary", "secondary"],
       default: "info"
     },
 
@@ -60,14 +57,14 @@ const ActivitySchema = new mongoose.Schema(
 
 /**
  * ⭐ Virtual: Relative Time
- * Optimized to handle clock drift and long-term retention.
+ * Formats the timestamp for "The Pulse" UI (e.g., "5m ago").
  */
 ActivitySchema.virtual("relativeTime").get(function () {
   if (!this.createdAt) return "---";
   const now = new Date();
   const diff = Math.floor((now - this.createdAt) / 1000);
   
-  // Handle edge case where server/client time sync is off
+  // Handle clock drift
   if (diff < 5) return "just now";
   
   if (diff < 60) return `${diff}s ago`;
@@ -75,7 +72,6 @@ ActivitySchema.virtual("relativeTime").get(function () {
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
   
-  // Return localized date for items older than a week
   return this.createdAt.toLocaleDateString('en-US', { 
     month: 'short', 
     day: 'numeric' 
@@ -84,18 +80,17 @@ ActivitySchema.virtual("relativeTime").get(function () {
 
 /**
  * ⭐ Performance Indexing
- * Optimized for the "The Pulse" Live Feed on the dashboard.
+ * Compound indexes cover (Field + Time) queries for fast dashboard sorting.
  */
 ActivitySchema.index({ category: 1, createdAt: -1 });
 ActivitySchema.index({ user: 1, createdAt: -1 });
-// Compound index for filtered activity views
 ActivitySchema.index({ level: 1, createdAt: -1 });
 
 /**
  * ⭐ Retention Policy (90 Days)
- * Keeps the database lean by auto-purging old logs.
- * 7,776,000 seconds = 90 days.
+ * Auto-deletes old logs to keep the DB lean.
  */
 ActivitySchema.index({ createdAt: 1 }, { expireAfterSeconds: 7776000 });
 
-export default mongoose.model("Activity", ActivitySchema);
+const Activity = mongoose.model("Activity", ActivitySchema);
+export default Activity;

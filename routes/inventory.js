@@ -8,7 +8,7 @@ import {
   createInventory,
   updateInventory,
   deleteInventory,
-  uploadVehicleImage, // ✅ Now provided by controller
+  uploadVehicleImage, 
   exportInventory,
   bulkUpdateInventory,
   decodeVin,
@@ -22,9 +22,28 @@ const router = express.Router();
  */
 router.use(protect);
 
+// 🛡️ Error-Catching Wrapper for Multer
+// Moved up so it can be used in the route definitions below
+const handleMediaUpload = (req, res, next) => {
+  const upload = uploadMedia.fields([
+    { name: 'photos', maxCount: 15 },    
+    { name: 'walkaround', maxCount: 1 },
+    { name: 'carfax', maxCount: 1 }
+  ]);
+
+  upload(req, res, (err) => {
+    if (err) {
+      if (err.name === 'MulterError') {
+        return res.status(400).json({ message: `Upload Error: ${err.message}` });
+      }
+      return res.status(500).json({ message: 'Server error during file upload.', error: err.message });
+    }
+    next(); 
+  });
+};
+
 /* -------------------------------------------
  * 📊 UTILITY & EXTERNAL API ROUTES
- * (Static routes defined first to avoid :id collisions)
  * ----------------------------------------- */
 router.get("/export", exportInventory);
 router.get("/decode/:vin", decodeVin);      
@@ -39,33 +58,23 @@ router.patch("/bulk-update", bulkUpdateInventory);
  * 🚗 COLLECTION & CORE ROUTES
  * ----------------------------------------- */
 router.get("/", getInventory);       
-router.post("/", createInventory);    
+router.post("/", handleMediaUpload, createInventory); // ✅ Enabled for new vehicle creation with photos
 
 /* -------------------------------------------
  * 🛠️ INDIVIDUAL UNIT ROUTES
  * ----------------------------------------- */
 router.route("/:id")
   .get(getVehicleById)     
-  .put(updateInventory)    
-  .patch(updateInventory) 
+  .put(handleMediaUpload, updateInventory)    // ✅ FIXED: Now catches photos on Sync
+  .patch(handleMediaUpload, updateInventory)  // ✅ FIXED: Now catches photos on partial updates
   .delete(deleteInventory);
 
 /* -------------------------------------------
- * 📷 MEDIA & WALKTHROUGH ASSETS
+ * 📷 MEDIA & WALKTHROUGH ASSETS (Legacy/Specific Fallbacks)
  * ----------------------------------------- */
 
-// 1. High-Performance Multi-Part Upload (Photos & 4K Video)
-// uploadMedia processes the files, then passes req.files to updateInventory
-router.post("/:id/media", 
-  uploadMedia.fields([
-    { name: 'photos', maxCount: 10 },
-    { name: 'walkaround', maxCount: 1 }
-  ]), 
-  updateInventory
-);
-
-// 2. Legacy Base64 Upload
-// Direct Base64 string processing from Capacitor Camera
+// Keep these as dedicated endpoints if your mobile app specifically calls them
+router.post("/:id/media", handleMediaUpload, updateInventory);
 router.post("/:id/image", uploadVehicleImage);
 
 export default router;

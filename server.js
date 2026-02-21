@@ -5,7 +5,6 @@ import morgan from "morgan";
 import dotenv from "dotenv";
 import path from "path";
 import fs from "fs";
-import cron from "node-cron";
 import { fileURLToPath } from "url";
 import { createServer } from "http";
 import { Server } from "socket.io";
@@ -35,10 +34,19 @@ connectDB();
 /* -------------------------------------------
  * 1. Directory Initialization
  * ----------------------------------------- */
-const uploadFolders = ["uploads/videos", "uploads/vehicles", "uploads/carfax", "uploads/profiles"];
+const uploadFolders = [
+  "public/uploads/videos", 
+  "public/uploads/vehicles", 
+  "public/uploads/carfax", 
+  "public/uploads/profiles"
+];
+
 uploadFolders.forEach(folder => {
-  const fullPath = path.join(__dirname, folder);
-  if (!fs.existsSync(fullPath)) fs.mkdirSync(fullPath, { recursive: true });
+  const fullPath = path.join(process.cwd(), folder);
+  if (!fs.existsSync(fullPath)) {
+    fs.mkdirSync(fullPath, { recursive: true });
+    console.log(`📁 Created folder: ${fullPath}`);
+  }
 });
 
 /* -------------------------------------------
@@ -50,18 +58,18 @@ app.use(helmet({
   contentSecurityPolicy: false 
 })); 
 
-// ✅ The "Golden List" for VinPro 2026 Mobile & Web
 const allowedOrigins = [
-  'http://localhost:3000',    // Local Web Browser
-  'http://localhost:8100',    // Ionic/Capacitor Dev Server
-  'capacitor://localhost',    // Capacitor iOS
-  'http://localhost',         // Capacitor Android
-  'app://localhost'           // Legacy iOS Webview fallback
+  'http://localhost:3000',
+  'http://localhost:8100',
+  'capacitor://localhost',
+  'http://localhost',
+  'https://localhost',
+  'app://localhost'
 ];
 
 app.use(cors({
   origin: (origin, callback) => {
-    // 💡 Allow tools like Postman (!origin), defined origins, OR dynamic local LAN IPs
+    // ✅ Logic: Mirror the origin for local 192.168 testing
     if (!origin || allowedOrigins.includes(origin) || origin.startsWith('http://192.168.')) {
       callback(null, true);
     } else {
@@ -83,30 +91,34 @@ app.use(express.urlencoded({ limit: "100mb", extended: true }));
  * ----------------------------------------- */
 const io = new Server(httpServer, {
   cors: {
-    // ✅ Use true to safely mirror the dynamically accepted Express CORS origin
-    origin: true,
+    // ✅ FIX: Setting origin to true mirrors the request origin, 
+    // essential for WebSocket handshakes on dynamic LAN IPs.
+    origin: true, 
     methods: ["GET", "POST"],
     credentials: true
   },
-  // ✅ Crucial for Mobile: Prevents the server from dropping the connection 
-  // immediately if the salesman walks behind a concrete wall.
+  // ✅ FIX: Required for some mobile WebView engines and older browser versions
+  allowEIO3: true, 
   pingInterval: 25000, 
   pingTimeout: 60000,
+  // Ensure we support the forced websocket transport from the client
+  transports: ['websocket', 'polling'] 
 });
 
 app.set("io", io);
 
 io.on("connection", (socket) => {
   console.log(`📡 Pulse Connected: ${socket.id}`);
-  socket.on("disconnect", (reason) => console.log(`🔌 Pulse Disconnected: ${reason}`));
+  socket.on("disconnect", (reason) => {
+    console.log(`🔌 Pulse Disconnected: ${reason}`);
+  });
 });
 
 /* -------------------------------------------
  * 4. Static File Serving
  * ----------------------------------------- */
-app.use("/uploads", express.static(path.join(__dirname, "uploads"), {
+app.use("/uploads", express.static(path.join(process.cwd(), "public/uploads"), {
   setHeaders: (res) => {
-    // Use "*" here only for static assets where credentials aren't required
     res.set("Access-Control-Allow-Origin", "*");
     res.set("Cross-Origin-Resource-Policy", "cross-origin");
   }
@@ -124,7 +136,7 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/marketcheck", marketCheckRoutes);
 
 app.get("/api/ping", (req, res) => {
-  res.json({ status: "online", engine: "VinPro v8.2", time: new Date() });
+  res.json({ status: "online", engine: "VinPro", time: new Date() });
 });
 
 /* -------------------------------------------
@@ -139,6 +151,7 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 5000;
+// ✅ CRITICAL: Using '0.0.0.0' allows connections from your phone on the local network
 httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 VinPro Engine Online | Listening on Port ${PORT}`);
 });

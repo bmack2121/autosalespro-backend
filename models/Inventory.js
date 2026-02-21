@@ -18,16 +18,15 @@ const inventorySchema = new mongoose.Schema({
   driveType: { 
     type: String, 
     default: 'N/A'
-    // Removed strict Enum to prevent API-sync crashes from varied API strings
   },
   fuelType: { 
     type: String, 
     default: 'Gasoline'
   },
   exteriorColor: { type: String, default: 'Unknown' },
-  interiorColor: { type: String, default: 'Unknown' }, // Added for MarketCheck data
+  interiorColor: { type: String, default: 'Unknown' },
   engine: { type: String, default: 'N/A' },
-  transmission: { type: String, default: 'N/A' }, // Added for Sales Desk
+  transmission: { type: String, default: 'N/A' },
   bodyClass: { type: String }, 
   
   // 📊 Pricing & Profit Intelligence
@@ -35,8 +34,8 @@ const inventorySchema = new mongoose.Schema({
   mileage: { type: Number, default: 0 },
   
   // 📡 MarketCheck Integration Fields
-  marketAverage: { type: Number, default: 0 }, // Mean price from MarketCheck
-  marketRank: { type: String, default: 'Neutral' }, // e.g., 'Great Deal', 'Fair Price'
+  marketAverage: { type: Number, default: 0 }, 
+  marketRank: { type: String, default: 'Neutral' },
   marketLastUpdated: { type: Date },
   msrp: { type: Number, default: 0 },
   
@@ -48,8 +47,13 @@ const inventorySchema = new mongoose.Schema({
   },
 
   // 📸 Media Assets
-  photos: [{ type: String }], // Changed to Array to support galleries
-  walkaroundVideo: { type: String }, // 4K Walkaround support
+  // ✅ Initialized as an empty array to prevent .map() errors in React
+  photos: { 
+    type: [String], 
+    default: [] 
+  }, 
+  walkaroundVideo: { type: String },
+  carfaxReport: { type: String }, // Added to match your controller logic
   
   // 📅 Relationships & Metadata
   addedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -60,15 +64,22 @@ const inventorySchema = new mongoose.Schema({
   toObject: { virtuals: true }
 });
 
+// ✅ VIRTUAL: Primary Photo
+// Returns the first photo in the array or a placeholder if empty
+inventorySchema.virtual('primaryPhoto').get(function() {
+  return this.photos && this.photos.length > 0 
+    ? this.photos[0] 
+    : '/assets/no-image-placeholder.png';
+});
+
 // ✅ VIRTUAL: Market Variance Percentage
-// Shows how much % your car is above/below market (Negative = Better Deal)
 inventorySchema.virtual('marketVariance').get(function() {
-  if (!this.price || !this.marketAverage) return 0;
+  if (!this.price || !this.marketAverage || this.marketAverage === 0) return 0;
   const variance = ((this.price - this.marketAverage) / this.marketAverage) * 100;
   return parseFloat(variance.toFixed(2));
 });
 
-// ✅ VIRTUAL: Calculate "Days on Lot"
+// ✅ VIRTUAL: Days on Lot
 inventorySchema.virtual('daysOnLot').get(function() {
   const now = new Date();
   const diffTime = Math.abs(now - this.dateAdded);

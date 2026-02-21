@@ -2,24 +2,23 @@ import mongoose from "mongoose";
 
 const customerSchema = new mongoose.Schema(
   {
-    // Basic Info
-    firstName: { type: String, required: true },
-    lastName: { type: String, required: true },
-    phone: { type: String },
-    email: { type: String },
+    // Basic Info (Flattened to match React frontend payload)
+    firstName: { type: String, required: true, trim: true },
+    lastName: { type: String, required: true, trim: true },
+    phone: { type: String, trim: true },
+    email: { type: String, trim: true, lowercase: true },
+    address: { type: String, trim: true },
+    dob: { type: String, trim: true },
 
-    // Driver's License Data (Step 1: The Lead Fast-Pass)
+    // Driver's License Data (AAMVA support)
     dlData: {
-      address: { type: String },
-      dob: { type: String },
-      licenseNumber: { type: String },
-      state: { type: String }
+      licenseNumber: { type: String, trim: true },
+      state: { type: String, trim: true }
     },
 
-    // ✅ ADDED: Trade-In Information (Step 2: Scanned from the lot)
-    // This allows the LeadIntake VinScanner to persist data
+    // Trade-In Information (Scanned from the lot)
     tradeIn: {
-      vin: { type: String, uppercase: true },
+      vin: { type: String, uppercase: true, trim: true },
       year: { type: String },
       make: { type: String },
       model: { type: String },
@@ -27,7 +26,7 @@ const customerSchema = new mongoose.Schema(
       condition: { type: String, default: "Unknown" }
     },
 
-    // Qualification Data (Step 2: The Soft Pull)
+    // Qualification Data (The Soft Pull)
     qualification: {
       creditBand: { 
         type: String, 
@@ -46,26 +45,25 @@ const customerSchema = new mongoose.Schema(
       default: "New Lead"
     },
 
-    // Dates as Strings for easier mobile formatting
-    lastContact: { type: String },     
-    nextFollowUp: { type: String },    
-
+    // Engagement score (Pulse feed tracking)
     engagement: { type: Number, default: 20 }, // 0–100 score
     notes: { type: String, default: "" },
 
-    // Vehicle History
+    // Dates as Strings for easier mobile formatting
+    lastContact: { type: String },      
+    nextFollowUp: { type: String },    
+
+    // Media & Reports
     carfaxReport: { type: String, default: "" },
     walkthroughVideoUrl: { type: String, default: "" }, 
 
-    // Deal history
+    // Relationships
     dealHistory: [
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Deal"
       }
     ],
-
-    // Assigned salesperson
     assignedTo: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User"
@@ -73,15 +71,26 @@ const customerSchema = new mongoose.Schema(
   },
   { 
     timestamps: true,
-    // ✅ FIX: Required to make virtuals like 'fullName' appear in res.json()
     toJSON: { virtuals: true },
     toObject: { virtuals: true }
   }
 );
 
-// Virtual for full name
-customerSchema.virtual('fullName').get(function() {
+/**
+ * ✅ VIRTUAL: name
+ * Bridges the gap between the DB (firstName/lastName) and the 
+ * React Frontend which expects 'name' for searching and display.
+ */
+customerSchema.virtual('name').get(function() {
   return `${this.firstName} ${this.lastName}`;
+});
+
+/**
+ * ✅ VIRTUAL: isScanned
+ * Returns true if driver's license data exists, triggering the 'VERIFIED' badge.
+ */
+customerSchema.virtual('isScanned').get(function() {
+  return !!(this.dlData && this.dlData.licenseNumber);
 });
 
 export default mongoose.model("Customer", customerSchema);

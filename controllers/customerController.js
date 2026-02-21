@@ -24,7 +24,9 @@ export const getCustomers = async (req, res) => {
  */
 export const getCustomer = async (req, res) => {
   try {
-    const customer = await Customer.findById(req.params.id).populate("assignedTo", "name");
+    const customer = await Customer.findById(req.params.id)
+      .populate("assignedTo", "name")
+      .populate("dealHistory"); // ✅ Added populate so frontend can see deal details
     if (!customer) return res.status(404).json({ message: "Customer not found" });
     res.json(customer);
   } catch (err) {
@@ -33,14 +35,34 @@ export const getCustomer = async (req, res) => {
 };
 
 /**
- * ⭐ CREATE customer
+ * ⭐ CREATE customer (With Duplicate Protection)
  */
 export const createCustomer = async (req, res) => {
   try {
+    const { email, phone } = req.body;
+
+    // ✅ FIX 1: Prevent Duplicate Leads
+    if (email || phone) {
+      const existing = await Customer.findOne({
+        $or: [
+          { email: email ? email.toLowerCase() : "NEVER_MATCH" },
+          { phone: phone ? phone : "NEVER_MATCH" }
+        ]
+      });
+
+      if (existing) {
+        return res.status(409).json({ 
+          message: "A lead with this email or phone already exists.",
+          id: existing._id // Send back the ID so React can route to the existing profile
+        });
+      }
+    }
+
     const customerData = {
       ...req.body,
       assignedTo: req.body.assignedTo || req.user.id
     };
+    
     const customer = await Customer.create(customerData);
 
     await Activity.create({
@@ -92,15 +114,23 @@ export const uploadVideo = async (req, res) => {
 };
 
 /**
- * ⭐ ADD DEAL
+ * ⭐ ADD DEAL (Fixed to match Schema)
  */
 export const addDeal = async (req, res) => {
   try {
-    const { vehicle, payment, date } = req.body;
+    // ✅ FIX 2: Schema expects a Deal ObjectId, not an object with vehicle/payment
+    const { dealId } = req.body; 
+    
     const customer = await Customer.findById(req.params.id);
     if (!customer) return res.status(404).json({ message: "Customer not found" });
 
-    customer.deals.push({ vehicle, payment, date });
+    if (!dealId) return res.status(400).json({ message: "Valid dealId is required" });
+
+    // Prevent adding the same deal twice
+    if (!customer.dealHistory.includes(dealId)) {
+      customer.dealHistory.push(dealId);
+    }
+    
     customer.status = "In Deal";
     customer.engagement = 100;
 
@@ -109,7 +139,7 @@ export const addDeal = async (req, res) => {
     await Activity.create({
       category: "DEAL",
       type: "DEAL_STARTED",
-      message: `Deal structured for ${getFullName(customer)} on unit ${vehicle}`,
+      message: `Deal structured for ${getFullName(customer)}`,
       user: req.user.id,
       customer: customer._id
     });

@@ -14,47 +14,66 @@ const broadcastActivity = async (req, activity) => {
   }
 };
 
-// ⭐ 1. CREATE Lead from DL Scan
+// ⭐ 1. CREATE Lead from DL Scan (Now handles flattened AAMVA data)
 export const createLeadFromScan = async (req, res) => {
   try {
-    const { firstName, lastName, dlData, email, phone } = req.body;
+    const { firstName, lastName, address, dob, email, phone, tradeIn } = req.body;
 
-    // ✅ CHECK FOR EXISTING: Prevent duplicates based on DL Number or Email
-    let customer = await Customer.findOne({ 
-      $or: [
-        { "dlData.licenseNumber": dlData?.licenseNumber }, 
-        { email: email?.toLowerCase() }
-      ] 
+    // ✅ CHECK FOR EXISTING: Prevent duplicates based on Name + DOB (Standard AAMVA deduplication)
+    let existingCustomer = await Customer.findOne({ 
+      firstName: firstName,
+      lastName: lastName,
+      dob: dob
     });
     
-    if (customer) {
+    // If we have an email or phone, check those too as a secondary net
+    if (!existingCustomer && (email || phone)) {
+      existingCustomer = await Customer.findOne({
+        $or: [
+          { email: email ? email.toLowerCase() : "NEVER_MATCH" },
+          { phone: phone ? phone : "NEVER_MATCH" }
+        ]
+      });
+    }
+
+    if (existingCustomer) {
+      // If we scanned a trade-in but they already exist, update their profile with the car!
+      if (tradeIn && !existingCustomer.tradeIn?.vin) {
+        existingCustomer.tradeIn = tradeIn;
+        await existingCustomer.save();
+      }
+
       return res.status(200).json({ 
         message: "Existing lead found. Opening profile...", 
-        customer,
+        customer: existingCustomer,
         isExisting: true 
       });
     }
 
-    customer = await Customer.create({
+    // ✅ FIX: Create new lead using the flattened data structure
+    const newCustomer = await Customer.create({
       firstName,
       lastName,
+      address,
+      dob,
       email: email?.toLowerCase(),
       phone,
-      dlData,
+      tradeIn, // Captures the VIN scanner data
       assignedTo: req.user.id 
     });
 
     const activity = await Activity.create({
       category: "CUSTOMER",
       type: "DL_SCAN",
-      message: `Lead Captured: ${firstName} ${lastName} via DL Scanner`,
+      message: `Lead Captured: ${firstName} ${lastName} via Fast-Pass Scanner`,
       user: req.user.id,
-      customer: customer._id
+      customer: newCustomer._id
     });
 
     broadcastActivity(req, activity);
-    res.status(201).json(customer);
+    res.status(201).json(newCustomer);
   } catch (err) {
+    console.error("DL Scan processing failed:", err);
     res.status(500).json({ message: "DL Scan processing failed", error: err.message });
   }
 };
@@ -100,7 +119,7 @@ export const runSoftPull = async (req, res) => {
 // ⭐ 3. CREATE/SAVE Deal
 export const createDeal = async (req, res) => {
   try {
-    // ✅ Let the Deal model middleware handle the ACV and Payment math
+    // Let the Deal model middleware handle the ACV and Payment math
     const dealData = {
       ...req.body,
       user: req.user.id,
@@ -138,7 +157,6 @@ export const getDeals = async (req, res) => {
     const deals = await Deal.find(query)
       .populate("customer", "firstName lastName phone qualification status") 
       .populate("user", "name")
-      // ✅ FIX: Use 'photos' to match the Inventory model
       .populate("vehicle", "year make model stockNumber price photos") 
       .sort({ createdAt: -1 });
 
