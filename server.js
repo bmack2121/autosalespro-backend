@@ -21,10 +21,10 @@ import tasksRoutes from "./routes/tasks.js";
 import dashboardRoutes from "./routes/dashboard.js";
 import marketCheckRoutes from "./routes/marketCheckRoutes.js";
 
+dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-dotenv.config();
 const app = express();
 const httpServer = createServer(app);
 
@@ -61,11 +61,11 @@ const allowedOrigins = [
   'app://localhost'
 ];
 
-// ✅ FIX: Unified origin check for both Express and Socket.io
 const originCheck = (origin, callback) => {
-  // Allow requests with no origin (like mobile apps or curl requests)
-  // or if it matches our allowed list / local IP subnet.
-  if (!origin || allowedOrigins.includes(origin) || origin.includes('192.168.')) {
+  // Allow requests with no origin (mobile apps) or from our allowed list/local network
+  const isLocalIP = origin && (origin.includes('192.168.') || origin.includes('10.0.'));
+  
+  if (!origin || allowedOrigins.includes(origin) || isLocalIP) {
     callback(null, true);
   } else {
     console.warn(`🚨 VinPro CORS Blocked: ${origin}`);
@@ -94,12 +94,20 @@ app.use(express.json({ limit: "100mb" }));
 app.use(express.urlencoded({ limit: "100mb", extended: true }));
 
 /* -------------------------------------------
- * 4. Socket.io (The Pulse)
+ * 4. Socket.io (The Pulse - Hardened for iOS)
  * ----------------------------------------- */
 const io = new Server(httpServer, {
+  path: "/socket.io/", // ✅ Explicit path helps resolve namespace errors
   cors: {
-    // ✅ FIX: Use the exact same shared logic as Express
-    origin: originCheck, 
+    // We use a simpler boolean or dynamic origin check for Socket.io 
+    // to ensure the capacitor:// handshake is never rejected.
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin) || origin.includes('192.168.')) {
+        callback(null, true);
+      } else {
+        callback(null, true); // Fallback to allow connection for mobile debugging
+      }
+    },
     methods: ["GET", "POST"],
     credentials: true
   },
