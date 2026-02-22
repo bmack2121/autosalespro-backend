@@ -50,14 +50,8 @@ uploadFolders.forEach(folder => {
 });
 
 /* -------------------------------------------
- * 2. Middleware & Security
+ * 2. Shared CORS Configuration
  * ----------------------------------------- */
-app.use(helmet({ 
-  crossOriginResourcePolicy: { policy: "cross-origin" },
-  crossOriginEmbedderPolicy: false,
-  contentSecurityPolicy: false 
-})); 
-
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:8100',
@@ -67,16 +61,29 @@ const allowedOrigins = [
   'app://localhost'
 ];
 
+// ✅ FIX: Unified origin check for both Express and Socket.io
+const originCheck = (origin, callback) => {
+  // Allow requests with no origin (like mobile apps or curl requests)
+  // or if it matches our allowed list / local IP subnet.
+  if (!origin || allowedOrigins.includes(origin) || origin.includes('192.168.')) {
+    callback(null, true);
+  } else {
+    console.warn(`🚨 VinPro CORS Blocked: ${origin}`);
+    callback(new Error('Not allowed by CORS'));
+  }
+};
+
+/* -------------------------------------------
+ * 3. Middleware & Security
+ * ----------------------------------------- */
+app.use(helmet({ 
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginEmbedderPolicy: false,
+  contentSecurityPolicy: false 
+})); 
+
 app.use(cors({
-  origin: (origin, callback) => {
-    // ✅ Logic: Mirror the origin for local 192.168 testing
-    if (!origin || allowedOrigins.includes(origin) || origin.startsWith('http://192.168.')) {
-      callback(null, true);
-    } else {
-      console.warn(`🚨 VinPro CORS Blocked: ${origin}`);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: originCheck,
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
@@ -87,35 +94,33 @@ app.use(express.json({ limit: "100mb" }));
 app.use(express.urlencoded({ limit: "100mb", extended: true }));
 
 /* -------------------------------------------
- * 3. Socket.io (The Pulse)
+ * 4. Socket.io (The Pulse)
  * ----------------------------------------- */
 const io = new Server(httpServer, {
   cors: {
-    // ✅ FIX: Setting origin to true mirrors the request origin, 
-    // essential for WebSocket handshakes on dynamic LAN IPs.
-    origin: true, 
+    // ✅ FIX: Use the exact same shared logic as Express
+    origin: originCheck, 
     methods: ["GET", "POST"],
     credentials: true
   },
-  // ✅ FIX: Required for some mobile WebView engines and older browser versions
   allowEIO3: true, 
   pingInterval: 25000, 
   pingTimeout: 60000,
-  // Ensure we support the forced websocket transport from the client
   transports: ['websocket', 'polling'] 
 });
 
 app.set("io", io);
 
 io.on("connection", (socket) => {
-  console.log(`📡 Pulse Connected: ${socket.id}`);
+  console.log(`📡 Pulse Connected: ${socket.id} (Transport: ${socket.conn.transport.name})`);
+  
   socket.on("disconnect", (reason) => {
     console.log(`🔌 Pulse Disconnected: ${reason}`);
   });
 });
 
 /* -------------------------------------------
- * 4. Static File Serving
+ * 5. Static File Serving
  * ----------------------------------------- */
 app.use("/uploads", express.static(path.join(process.cwd(), "public/uploads"), {
   setHeaders: (res) => {
@@ -125,7 +130,7 @@ app.use("/uploads", express.static(path.join(process.cwd(), "public/uploads"), {
 }));
 
 /* -------------------------------------------
- * 5. API Routes
+ * 6. API Routes
  * ----------------------------------------- */
 app.use("/api/auth", authRoutes);
 app.use("/api/customers", customerRoutes);
@@ -140,7 +145,7 @@ app.get("/api/ping", (req, res) => {
 });
 
 /* -------------------------------------------
- * 6. Error Handling & Server Start
+ * 7. Error Handling & Server Start
  * ----------------------------------------- */
 app.use((err, req, res, next) => {
   console.error("🔥 Global Error:", err.stack);
@@ -151,7 +156,6 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 5000;
-// ✅ CRITICAL: Using '0.0.0.0' allows connections from your phone on the local network
 httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 VinPro Engine Online | Listening on Port ${PORT}`);
 });
