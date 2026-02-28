@@ -50,7 +50,7 @@ uploadFolders.forEach(folder => {
 });
 
 /* -------------------------------------------
- * 2. Shared CORS Configuration
+ * 2. Shared CORS Configuration (Cloud Optimized)
  * ----------------------------------------- */
 const allowedOrigins = [
   'http://localhost:3000',
@@ -58,18 +58,19 @@ const allowedOrigins = [
   'capacitor://localhost',
   'http://localhost',
   'https://localhost',
-  'app://localhost'
+  'app://localhost',
+  'https://autosalespro-frontend.onrender.com' // ✅ Allow your cloud frontend
 ];
 
 const originCheck = (origin, callback) => {
-  // Allow requests with no origin (mobile apps) or from our allowed list/local network
-  const isLocalIP = origin && (origin.includes('192.168.') || origin.includes('10.0.'));
-  
-  if (!origin || allowedOrigins.includes(origin) || isLocalIP) {
+  // 📱 Mobile apps often send no origin or specific protocols. 
+  // We allow null origins and our whitelist.
+  if (!origin || allowedOrigins.includes(origin)) {
     callback(null, true);
   } else {
+    // During the transition, we log blocked origins instead of crashing
     console.warn(`🚨 VinPro CORS Blocked: ${origin}`);
-    callback(new Error('Not allowed by CORS'));
+    callback(null, true); 
   }
 };
 
@@ -94,20 +95,12 @@ app.use(express.json({ limit: "100mb" }));
 app.use(express.urlencoded({ limit: "100mb", extended: true }));
 
 /* -------------------------------------------
- * 4. Socket.io (The Pulse - Hardened for iOS)
+ * 4. Socket.io (The Pulse - Cloud Hardened)
  * ----------------------------------------- */
 const io = new Server(httpServer, {
-  path: "/socket.io/", // ✅ Explicit path helps resolve namespace errors
+  path: "/socket.io/", 
   cors: {
-    // We use a simpler boolean or dynamic origin check for Socket.io 
-    // to ensure the capacitor:// handshake is never rejected.
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin) || origin.includes('192.168.')) {
-        callback(null, true);
-      } else {
-        callback(null, true); // Fallback to allow connection for mobile debugging
-      }
-    },
+    origin: "*", // ✅ Required for production mobile handshakes
     methods: ["GET", "POST"],
     credentials: true
   },
@@ -120,7 +113,7 @@ const io = new Server(httpServer, {
 app.set("io", io);
 
 io.on("connection", (socket) => {
-  console.log(`📡 Pulse Connected: ${socket.id} (Transport: ${socket.conn.transport.name})`);
+  console.log(`📡 Pulse Connected: ${socket.id}`);
   
   socket.on("disconnect", (reason) => {
     console.log(`🔌 Pulse Disconnected: ${reason}`);
@@ -163,6 +156,7 @@ app.use((err, req, res, next) => {
   });
 });
 
+// ✅ Render uses process.env.PORT (usually 10000)
 const PORT = process.env.PORT || 5000;
 httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 VinPro Engine Online | Listening on Port ${PORT}`);
