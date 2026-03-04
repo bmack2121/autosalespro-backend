@@ -54,18 +54,16 @@ const userSchema = new mongoose.Schema(
 
 /**
  * ⭐ Password Hashing
- * Runs before saving to database
+ * Runs before saving to database. 
+ * Note: No `next` parameter is used because this is an async function.
  */
-userSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
+userSchema.pre("save", async function () {
+  // If the password hasn't been modified, exit the hook and continue saving
+  if (!this.isModified("password")) return;
 
-  try {
-    const salt = await bcrypt.genSalt(12);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (err) {
-    next(err);
-  }
+  // Hash the password
+  const salt = await bcrypt.genSalt(12);
+  this.password = await bcrypt.hash(this.password, salt);
 });
 
 /**
